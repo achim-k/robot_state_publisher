@@ -132,7 +132,7 @@ bool loadTreeAndMimicMap(KDL::Tree& tree, MimicMap *mimic_map,
 
 bool JointStateListener::reload_robot_model(const std_msgs::StringConstPtr &description)
 {
-  update_ongoing_.lock();
+  boost::mutex::scoped_lock lock(update_ongoing_);
 
   timer_.stop();                  /// make sure that state_publisher is not currently publishing
   publish_interval_.sleep();      /// allow publishFixedTransforms to end
@@ -152,8 +152,6 @@ bool JointStateListener::reload_robot_model(const std_msgs::StringConstPtr &desc
   state_publisher_.updateTree(tree);
   state_publisher_.createTreeInfo(&msg);  /// create an info-string for the service caller
   timer_.start();        /// fixed transforms are published again
-
-  update_ongoing_.unlock();
 
   return true;
 }
@@ -181,7 +179,8 @@ void JointStateListener::callbackFixedJoint(const ros::TimerEvent& e)
 void JointStateListener::callbackJointState(const JointStateConstPtr& state)
 {
   /// continue processing of state-msgs to not collect old msgs in queue
-  while (update_ongoing_.try_lock())
+  boost::mutex::scoped_try_lock lock(update_ongoing_);
+  if (!lock.owns_lock())
     {
       ROS_WARN_THROTTLE(1, "Skipping joing state while robot model is updated");
       return;
@@ -272,4 +271,3 @@ int main(int argc, char** argv)
   ros::spin();
   return 0;
 }
-
