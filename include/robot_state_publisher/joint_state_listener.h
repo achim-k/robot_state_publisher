@@ -42,7 +42,7 @@
 #include <ros/ros.h>
 #include <sensor_msgs/JointState.h>
 #include "robot_state_publisher/robot_state_publisher.h"
-#include <std_srvs/Trigger.h>
+#include <std_msgs/String.h>
 #include <map>
 #include <string>
 #include <boost/thread/mutex.hpp>
@@ -67,23 +67,18 @@ public:
    * \param tree The kinematic model of a robot, represented by a KDL Tree
    */
   JointStateListener(const KDL::Tree& tree, const MimicMap& m, const urdf::Model& model = urdf::Model());
-
-  ros::ServiceServer reload_server;
-
   ~JointStateListener();
 
 private:
   /// Callback for reload-Service
-  bool reload_robot_model_cb(std_srvs::Trigger::Request& req, std_srvs::Trigger::Response& res);
-
-  bool reload_robot_model(std::string* error_msg);
-
-
+  void robot_description_cb(const std_msgs::StringConstPtr &description);
+  bool reload_robot_model(const std_msgs::StringConstPtr &description);
   void callbackJointState(const JointStateConstPtr& state);
   void callbackFixedJoint(const ros::TimerEvent& e);
 
 
-  boost::mutex update_ongoing;
+  boost::mutex update_ongoing_;
+  ros::Subscriber robot_description_sub_;
 
   std::string tf_prefix_;
   Duration publish_interval_;

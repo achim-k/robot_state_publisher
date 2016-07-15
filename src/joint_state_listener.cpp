@@ -69,12 +69,13 @@ JointStateListener::JointStateListener(const KDL::Tree& tree, const MimicMap& m,
   publish_interval_ = ros::Duration(1.0 / max(publish_freq, 1.0));
 
 
-  /// only offer reload_service on request
-  bool with_reload;
-  n_tilde.param("with_reload_service", with_reload, false);
-  if (with_reload)
+  /// check if robot description is latched via topic
+  bool latched_description;
+  n_tilde.param("latched_description", latched_description, false);
+  if (latched_description)
   {
-    reload_server = n_tilde.advertiseService("reload_robot_model", &JointStateListener::reload_robot_model_cb, this);
+    robot_description_sub_ = n.subscribe("robot_description", 1,
+                                         &JointStateListener::robot_description_cb, this);
   }
 
 
@@ -87,23 +88,31 @@ JointStateListener::JointStateListener(const KDL::Tree& tree, const MimicMap& m,
 }
 
 
-bool loadTreeAndMimicMap(KDL::Tree& tree, MimicMap *mimic_map, std::string *err_msg)
+bool loadTreeAndMimicMap(KDL::Tree& tree, MimicMap *mimic_map,
+                         std::string &err_msg,
+                         const std_msgs::StringConstPtr &description = std_msgs::StringConstPtr())
 {
   // gets the location of the robot description on the parameter server
   urdf::Model model;
-  bool found = model.initParam("robot_description");
+
+  // if the description is given, load it from there rather than from the param server
+  bool found = false;
+  if (description) {
+    found = model.initString(description->data);
+  } else {
+    found = model.initParam("robot_description");
+  }
+
 
   if (!found)
     {
-     if (err_msg)
-         *err_msg = "Could not read urdf_model from parameter server";
+      err_msg = "Could not read urdf_model from parameter server";
       return false;
     }
 
   if (!kdl_parser::treeFromUrdfModel(model, tree))
     {
-      if (err_msg)
-          *err_msg = "Failed to extract kdl tree from xml robot description";
+      err_msg = "Failed to extract kdl tree from xml robot description";
       return false;
     }
 
@@ -121,42 +130,44 @@ bool loadTreeAndMimicMap(KDL::Tree& tree, MimicMap *mimic_map, std::string *err_
   return true;
 }
 
-bool JointStateListener::reload_robot_model(std::string* msg)
+bool JointStateListener::reload_robot_model(const std_msgs::StringConstPtr &description)
 {
+  update_ongoing_.lock();
 
-  update_ongoing.lock();
-
-  timer_.stop();  /// make sure that state_publisher is not currently publishing
-  publish_interval_.sleep();       /// allow publishFixedTransforms to end
+  timer_.stop();                  /// make sure that state_publisher is not currently publishing
+  publish_interval_.sleep();      /// allow publishFixedTransforms to end
 
   KDL::Tree tree;
   mimic_.clear();
 
-  if (!loadTreeAndMimicMap(tree, &mimic_, msg))
-    {
-      ROS_ERROR("%s", msg->c_str());
+  std::string msg;
+  if (!loadTreeAndMimicMap(tree, &mimic_, msg, description)) {
+      ROS_ERROR("%s", msg.c_str());
       return false;
-    }
+  }
 
   /// if the update fails, both publishers (for fixed and non-fixed trafos) keep turned off so
   /// that the failure is obvious and no one is working with the old model
 
   state_publisher_.updateTree(tree);
-  state_publisher_.createTreeInfo(msg);  /// create an info-string for the service caller
+  state_publisher_.createTreeInfo(&msg);  /// create an info-string for the service caller
   timer_.start();        /// fixed transforms are published again
 
-  update_ongoing.unlock();
+  update_ongoing_.unlock();
 
   return true;
 }
 
 
 
-bool JointStateListener::reload_robot_model_cb(std_srvs::Trigger::Request &req, std_srvs::Trigger::Response &res)
+void JointStateListener::robot_description_cb(const std_msgs::StringConstPtr &description)
 {
-  ROS_DEBUG("Reload of Robot model requested");
-  res.success = reload_robot_model(&res.message);
-  return true;
+  ROS_DEBUG("Received new robot description, updating..");
+  if(reload_robot_model(description)) {
+    ROS_INFO("Updating robot model successful");
+    return;
+  }
+  ROS_WARN("Updating robot model failed");
 }
 
 JointStateListener::~JointStateListener() {}
@@ -170,7 +181,7 @@ void JointStateListener::callbackFixedJoint(const ros::TimerEvent& e)
 void JointStateListener::callbackJointState(const JointStateConstPtr& state)
 {
   /// continue processing of state-msgs to not collect old msgs in queue
-  while (update_ongoing.try_lock())
+  while (update_ongoing_.try_lock())
     {
       ROS_WARN_THROTTLE(1, "Skipping joing state while robot model is updated");
       return;
@@ -247,11 +258,15 @@ int main(int argc, char** argv)
   MimicMap mimic;
   std::string err_msg;
 
-  if (!loadTreeAndMimicMap(tree, &mimic, &err_msg))
-    {
-      ROS_ERROR("%s", err_msg.c_str());
-      return -1;
-    }
+  ros::NodeHandle n_tilde("~");
+  bool latched_description = n_tilde.param("latched_description", false);
+  if (!latched_description) {
+    if (!loadTreeAndMimicMap(tree, &mimic, err_msg))
+      {
+        ROS_ERROR("%s", err_msg.c_str());
+        return -1;
+      }
+  }
 
   JointStateListener state_publisher(tree, mimic);
   ros::spin();
