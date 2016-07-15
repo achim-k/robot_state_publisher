@@ -34,37 +34,56 @@
 
 /* Author: Wim Meeussen */
 
-#ifndef JOINT_STATE_LISTENER_H
-#define JOINT_STATE_LISTENER_H
+#ifndef ROBOT_STATE_PUBLISHER_JOINT_STATE_LISTENER_H
+#define ROBOT_STATE_PUBLISHER_JOINT_STATE_LISTENER_H
 
 #include <urdf/model.h>
 #include <kdl/tree.hpp>
 #include <ros/ros.h>
 #include <sensor_msgs/JointState.h>
 #include "robot_state_publisher/robot_state_publisher.h"
+#include <std_srvs/Trigger.h>
+#include <map>
+#include <string>
+#include <boost/thread/mutex.hpp>
 
-using namespace std;
-using namespace ros;
-using namespace KDL;
+using std::map;
+using std::string;
+using std::max;
+
+using ros::Duration;
+using ros::Subscriber;
 
 typedef boost::shared_ptr<sensor_msgs::JointState const> JointStateConstPtr;
 typedef std::map<std::string, boost::shared_ptr<urdf::JointMimic> > MimicMap;
 
-namespace robot_state_publisher{
+namespace robot_state_publisher
+{
 
-class JointStateListener{
+class JointStateListener
+{
 public:
   /** Constructor
    * \param tree The kinematic model of a robot, represented by a KDL Tree
    */
   JointStateListener(const KDL::Tree& tree, const MimicMap& m, const urdf::Model& model = urdf::Model());
 
-  /// Destructor
+  ros::ServiceServer reload_server;
+
   ~JointStateListener();
 
 private:
+  /// Callback for reload-Service
+  bool reload_robot_model_cb(std_srvs::Trigger::Request& req, std_srvs::Trigger::Response& res);
+
+  bool reload_robot_model(std::string* error_msg);
+
+
   void callbackJointState(const JointStateConstPtr& state);
   void callbackFixedJoint(const ros::TimerEvent& e);
+
+
+  boost::mutex update_ongoing;
 
   std::string tf_prefix_;
   Duration publish_interval_;
@@ -77,7 +96,7 @@ private:
   bool use_tf_static_;
 
 };
-}
+}  // namespace robot_state_publisher
 
 
-#endif
+#endif  // ROBOT_STATE_PUBLISHER_JOINT_STATE_LISTENER_H

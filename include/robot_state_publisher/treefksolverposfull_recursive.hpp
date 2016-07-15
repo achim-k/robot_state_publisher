@@ -27,7 +27,8 @@
 #include <tf2/transform_datatypes.h>
 
 
-namespace KDL {
+namespace KDL
+{
 
 class TreeFkSolverPosFull_recursive
 
